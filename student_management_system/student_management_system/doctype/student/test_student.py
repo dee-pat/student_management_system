@@ -55,6 +55,7 @@ class IntegrationTestStudent(IntegrationTestCase):
 				"last_name": "Lovelace",
 				"gender": "Female",
 				"date_of_birth": "1815-12-10",
+				"date_of_enrollment": "2026-01-15",
 				"table_oldt": [
 					{
 						"doctype": "Student Course Enrollment",
@@ -69,6 +70,7 @@ class IntegrationTestStudent(IntegrationTestCase):
 		self.assertIsNotNone(student.name)
 		self.assertEqual(student.gender, "Female")
 		self.assertEqual(student.date_of_birth, "1815-12-10")
+		self.assertEqual(student.date_of_enrollment, "2026-01-15")
 		self.assertEqual(student.full_name, "Ada Lovelace")
 		self.assertEqual(student.table_oldt[0].programme, programme.name)
 
@@ -80,3 +82,6 @@ class IntegrationTestStudent(IntegrationTestCase):
 		self.assertTrue(gender.reqd)
 		self.assertEqual(gender.options, "Male\nFemale")
 		self.assertTrue(meta.get_field("full_name").read_only)
+		date_of_enrollment = meta.get_field("date_of_enrollment")
+		self.assertEqual(date_of_enrollment.fieldtype, "Date")
+		self.assertFalse(date_of_enrollment.reqd)
