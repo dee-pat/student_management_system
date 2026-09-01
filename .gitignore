@@ -53,3 +53,9 @@ jspm_packages/
 
 # Aider AI Chat
 .aider*
+
+# Playwright output and authenticated browser state
+e2e/.auth/
+blob-report/
+playwright-report/
+test-results/
