@@ -43,4 +43,4 @@ class IntegrationTestAdmissionEnquiry(IntegrationTestCase):
 
 		self.assertTrue(enquiry.name.startswith("AE-"))
 		self.assertEqual(enquiry.programme, programme.name)
-		self.assertEqual(enquiry.dob.isoformat(), "1906-12-09")
+		self.assertEqual(enquiry.dob, "1906-12-09")

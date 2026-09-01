@@ -19,6 +19,7 @@ class IntegrationTestStudent(IntegrationTestCase):
 			{
 				"doctype": "Student",
 				"first_name": f"Missing Gender {uuid4().hex}",
+				"gender": "",
 			}
 		)
 
@@ -67,7 +68,8 @@ class IntegrationTestStudent(IntegrationTestCase):
 
 		self.assertIsNotNone(student.name)
 		self.assertEqual(student.gender, "Female")
-		self.assertEqual(student.date_of_birth.isoformat(), "1815-12-10")
+		self.assertEqual(student.date_of_birth, "1815-12-10")
+		self.assertEqual(student.full_name, "Ada Lovelace")
 		self.assertEqual(student.table_oldt[0].programme, programme.name)
 
 	def test_student_field_contract(self):
