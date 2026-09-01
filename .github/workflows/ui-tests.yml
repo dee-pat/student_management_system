@@ -1,0 +1,183 @@
+name: UI Tests
+
+on:
+  push:
+    branches:
+      - version-16
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ui-tests-student-management-system-${{ github.event.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ui-tests:
+    name: Playwright E2E Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    services:
+      redis-cache:
+        image: redis:alpine
+        ports:
+          - 13000:6379
+      redis-queue:
+        image: redis:alpine
+        ports:
+          - 11000:6379
+      mariadb:
+        image: mariadb:10.6
+        env:
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: --health-cmd="mariadb-admin ping" --health-interval=5s --health-timeout=2s --health-retries=3
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          check-latest: true
+
+      - name: Add site to hosts
+        run: echo "127.0.0.1 student_management_system.test" | sudo tee -a /etc/hosts
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
+
+      - name: Install MariaDB client
+        run: |
+          sudo apt update
+          sudo apt install --yes mariadb-client
+
+      - name: Set up bench
+        run: |
+          pip install frappe-bench
+          bench init \
+            --frappe-branch v16.31.0 \
+            --skip-redis-config-generation \
+            --skip-assets \
+            --python "$(which python)" \
+            /home/runner/frappe-bench
+
+      - name: Install app and build assets
+        working-directory: /home/runner/frappe-bench
+        run: |
+          bench get-app student_management_system "$GITHUB_WORKSPACE"
+          bench setup requirements --dev
+          bench new-site \
+            --db-root-password root \
+            --admin-password admin \
+            student_management_system.test
+          bench --site student_management_system.test set-config allow_tests true
+          bench --site student_management_system.test set-config developer_mode true
+          bench --site student_management_system.test set-config host_name "http://student_management_system.test:8000"
+          bench --site student_management_system.test install-app student_management_system
+          bench --site student_management_system.test migrate
+          bench build
+        env:
+          CI: "true"
+
+      - name: Start Frappe server
+        working-directory: /home/runner/frappe-bench
+        run: |
+          sed -i 's/^watch:/# watch:/g' Procfile
+          sed -i 's/^schedule:/# schedule:/g' Procfile
+          bench start > bench_start.log 2>&1 &
+          timeout 90 bash -c 'until curl --noproxy "*" --fail --silent http://student_management_system.test:8000/api/method/ping > /dev/null; do sleep 2; done'
+
+      - name: Install Playwright
+        working-directory: /home/runner/frappe-bench/apps/student_management_system
+        run: |
+          npm install --no-audit --no-fund
+          npx playwright install --with-deps chromium
+
+      - name: Run Playwright tests
+        working-directory: /home/runner/frappe-bench/apps/student_management_system
+        run: npm run test:e2e
+        env:
+          BASE_URL: http://student_management_system.test:8000
+          FRAPPE_USER: Administrator
+          FRAPPE_PASSWORD: admin
+          CI: "true"
+
+      - name: Upload blob report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: blob-report
+          if-no-files-found: ignore
+          path: /home/runner/frappe-bench/apps/student_management_system/blob-report/
+          retention-days: 3
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          if-no-files-found: ignore
+          path: /home/runner/frappe-bench/apps/student_management_system/test-results/
+          retention-days: 7
+
+      - name: Show bench logs on failure
+        if: failure()
+        working-directory: /home/runner/frappe-bench
+        run: |
+          cat bench_start.log || true
+          cat logs/*.log || true
+
+  merge-reports:
+    name: Merge Playwright Report
+    if: ${{ !cancelled() }}
+    needs: ui-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          check-latest: true
+
+      - name: Install Playwright
+        run: npm install --no-audit --no-fund
+
+      - name: Download blob report
+        uses: actions/download-artifact@v4
+        with:
+          name: blob-report
+          path: all-blob-reports
+
+      - name: Merge reports
+        run: npx playwright merge-reports --reporter html ./all-blob-reports
+
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          if-no-files-found: ignore
+          path: playwright-report/
+          retention-days: 7

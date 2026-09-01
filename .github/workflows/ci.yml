@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - version-16
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: version-16-student-management-system-${{ github.event.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Server
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      redis-cache:
+        image: redis:alpine
+        ports:
+          - 13000:6379
+      redis-queue:
+        image: redis:alpine
+        ports:
+          - 11000:6379
+      mariadb:
+        image: mariadb:11.8
+        env:
+          MARIADB_ROOT_PASSWORD: db_root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s
+          --health-timeout=2s
+          --health-retries=3
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          check-latest: true
+
+      - name: Install MariaDB client
+        run: |
+          sudo apt update
+          sudo apt install --yes mariadb-client
+
+      - name: Set up bench
+        run: |
+          pip install frappe-bench
+          bench init \
+            --frappe-branch v16.31.0 \
+            --skip-redis-config-generation \
+            --skip-assets \
+            --python "$(which python)" \
+            /home/runner/frappe-bench
+
+      - name: Install app
+        working-directory: /home/runner/frappe-bench
+        run: |
+          bench get-app student_management_system "$GITHUB_WORKSPACE"
+          bench setup requirements --dev
+          bench new-site \
+            --db-root-password db_root \
+            --admin-password admin \
+            student_management_system.test
+          bench --site student_management_system.test set-config allow_tests true
+          bench --site student_management_system.test set-config developer_mode true
+          bench --site student_management_system.test install-app student_management_system
+          bench --site student_management_system.test migrate
+          bench build
+        env:
+          CI: "true"
+
+      - name: Find tests
+        run: grep -R "def test_" -n student_management_system
+
+      - name: Run Frappe tests
+        working-directory: /home/runner/frappe-bench
+        run: bench --site student_management_system.test run-tests --app student_management_system
+        env:
+          TYPE: server
